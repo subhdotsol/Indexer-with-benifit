@@ -235,7 +235,25 @@ async fn main()->Result<(),Box<dyn std::error::Error>>{
 
 ---
 
-## 1. The Directory Structure
+## 1. Why these Dependencies? (`Cargo.toml`)
+
+When building a high-performance system like an indexer, we need specific tools. Here is why we picked each one:
+
+| Crate | Why we use it | Analogy |
+| :--- | :--- | :--- |
+| **`tokio`** | The **Async Runtime**. Solana moves fast; we need to handle thousands of things at once without "blocking". | The engine that lets 100 people work in one kitchen simultaneously. |
+| **`serde`** | **Serializing/Deserializing**. Converts Rust structs (objects) to JSON/Bytes and back. | The translator that converts "English" to "Binary" (and back). |
+| **`anyhow`** | Easy **Error Handling** for top-level logic. | A generic "Something went wrong" bucket that can hold any error. |
+| **`thiserror`** | For creating **Custom, Specific Error Types** in our logic (like `AppError`). | Specific labels like "Out of Milk" or "Oven is Cold" instead of just "Food Error". |
+| **`async-trait`** | Native Rust doesn't support `async` inside Traits yet. This crate allows it. | A plugin that adds an "Async" button to your Interface definitions. |
+| **`tracing`** | **Structured Logging**. Better than `println!` because it handles levels (Info, Error) and metadata. | A high-tech black box flight recorder for your code. |
+| **`tracing-subscriber`** | Decides **where** those logs go (e.g., your terminal). | The screen that shows the black box data. |
+| **`dotenv`** | Loads variables from your `.env` file automatically. | A script that fills in your "Secret Settings" so you don't hardcode them. |
+| **`bytes`** | High-performance binary data management. | A specialized tray for carrying raw bytes without accidental copying (saving memory). |
+
+---
+
+## 2. The Directory Structure
 
 ```
 src/
@@ -254,7 +272,7 @@ src/
 
 ---
 
-## 2. How Imports Work (`mod` vs `use`)
+## 3. How Imports Work (`mod` vs `use`)
 *   **`mod folder_name;`**: "Include this module." Done once per module.
 *   **`use crate::path::Item;`**: "Bring this Item into scope."
 *   **`pub mod` / `pub use`**: Makes things available to other modules.
