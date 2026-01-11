@@ -43,42 +43,168 @@ This caused:
 
 ## Implementation Details
 
-### Configuration Constants
+### 1. EventRepository Trait
 
+`src/application/ports/event_repository.rs`:
 ```rust
-const QUEUE_CAPACITY: usize = 1000;  // Buffer for bursts
-const BATCH_SIZE: usize = 50;         // Events per batch insert
-const FLUSH_INTERVAL_MS: u64 = 500;   // Max wait before flush
+#[async_trait]
+pub trait EventRepository: Send + Sync {
+    async fn save_event(&self, event: &TransactionEvent) -> AppResult<()>;
+    async fn save_events(&self, events: &[TransactionEvent]) -> AppResult<()>;
+    /// Batch insert events using a single transaction for better performance.
+    async fn save_events_batch(&self, events: Vec<TransactionEvent>) -> AppResult<usize>;
+}
 ```
-
-### Key Components
-
-| Component | Description |
-|-----------|-------------|
-| `mpsc::channel` | Bounded queue connecting parser to persistence task |
-| `try_send()` | Non-blocking send, drops events if queue full |
-| Background task | Receives events, batches them, flushes to DB |
-| `save_events_batch()` | Uses single transaction for all events |
-
-### Files Modified
-
-| File | Changes |
-|------|---------|
-| `application/ports/event_repository.rs` | Added `save_events_batch()` to trait |
-| `adapters/outbound/postgres_repository.rs` | Implemented batch insert with transaction |
-| `application/use_cases/ingest.rs` | Background queue + batch persistence |
 
 ---
 
-## How It Works
+### 2. PostgreSQL Batch Insert
 
-1. **Pipeline starts**: Creates bounded mpsc channel (capacity 1000)
-2. **Background task spawns**: Listens on channel, maintains event buffer
-3. **Parsing loop runs**: Sends events to channel via `try_send()` (non-blocking)
-4. **Background task flushes** when either:
-   - Buffer reaches 50 events
-   - 500ms have passed since last flush
-5. **Batch insert**: All events in single PostgreSQL transaction
+`src/adapters/outbound/postgres_repository.rs`:
+```rust
+async fn save_events_batch(&self, events: Vec<TransactionEvent>) -> AppResult<usize> {
+    if events.is_empty() {
+        return Ok(0);
+    }
+
+    let count = events.len();
+    
+    // Use a transaction for atomicity and better performance
+    let mut tx = self.pool.begin().await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    for event in &events {
+        match event {
+            TransactionEvent::TokenTransfer(transfer) => {
+                sqlx::query(
+                    r#"INSERT INTO token_transfers (signature, slot, from_address, to_address, amount, mint)
+                       VALUES ($1, $2, $3, $4, $5, $6)
+                       ON CONFLICT (signature) DO NOTHING"#,
+                )
+                .bind(&transfer.signature)
+                .bind(transfer.slot as i64)
+                .bind(&transfer.from)
+                .bind(&transfer.to)
+                .bind(transfer.amount as i64)
+                .bind(&transfer.mint)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+            }
+            // ... similar for RaydiumSwap, JupiterSwap, PumpFunSwap
+        }
+    }
+
+    tx.commit().await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    tracing::info!(count = count, "Batch persisted events to database");
+    Ok(count)
+}
+```
+
+---
+
+### 3. Ingestion Pipeline with Background Queue
+
+`src/application/use_cases/ingest.rs`:
+```rust
+/// Configuration for the background persistence queue
+const QUEUE_CAPACITY: usize = 1000;
+const BATCH_SIZE: usize = 50;
+const FLUSH_INTERVAL_MS: u64 = 500;
+
+pub struct IngestionPipeline {
+    source: Arc<Mutex<dyn TransactionSource>>,
+    parsers: Vec<Arc<dyn TransactionParser>>,
+    repository: Option<Arc<dyn EventRepository>>,
+}
+
+impl IngestionPipeline {
+    pub async fn run(&self) {
+        // Set up the background persistence channel
+        let (tx, rx) = mpsc::channel::<TransactionEvent>(QUEUE_CAPACITY);
+        
+        if let Some(ref repo) = self.repository {
+            // Spawn background persistence task
+            let repo_clone = Arc::clone(repo);
+            tokio::spawn(async move {
+                background_persistence_task(rx, repo_clone).await;
+            });
+        }
+
+        loop {
+            // Get next event from source
+            let event = { /* ... */ };
+
+            // Parse the transaction
+            for parser in &self.parsers {
+                if let Some(events) = parser.parse(&tx_data) {
+                    for event in events {
+                        // Send to background queue (non-blocking)
+                        if let Err(e) = tx.try_send(event) {
+                            tracing::warn!("Persistence queue full, event dropped");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+---
+
+### 4. Background Persistence Task
+
+```rust
+async fn background_persistence_task(
+    mut rx: mpsc::Receiver<TransactionEvent>,
+    repo: Arc<dyn EventRepository>,
+) {
+    let mut buffer: Vec<TransactionEvent> = Vec::with_capacity(BATCH_SIZE);
+    let mut interval = tokio::time::interval(Duration::from_millis(FLUSH_INTERVAL_MS));
+
+    loop {
+        tokio::select! {
+            // Try to receive events from the channel
+            event = rx.recv() => {
+                match event {
+                    Some(e) => {
+                        buffer.push(e);
+                        
+                        // Flush when batch is full
+                        if buffer.len() >= BATCH_SIZE {
+                            flush_buffer(&mut buffer, &repo).await;
+                        }
+                    }
+                    None => {
+                        // Channel closed, flush remaining and exit
+                        if !buffer.is_empty() {
+                            flush_buffer(&mut buffer, &repo).await;
+                        }
+                        break;
+                    }
+                }
+            }
+            // Periodic flush to ensure events don't sit in buffer too long
+            _ = interval.tick() => {
+                if !buffer.is_empty() {
+                    flush_buffer(&mut buffer, &repo).await;
+                }
+            }
+        }
+    }
+}
+
+async fn flush_buffer(buffer: &mut Vec<TransactionEvent>, repo: &Arc<dyn EventRepository>) {
+    let events: Vec<TransactionEvent> = buffer.drain(..).collect();
+    match repo.save_events_batch(events).await {
+        Ok(saved) => tracing::debug!(count = saved, "Flushed events to database"),
+        Err(e) => tracing::error!(error = ?e, "Failed to flush events to database"),
+    }
+}
+```
 
 ---
 
