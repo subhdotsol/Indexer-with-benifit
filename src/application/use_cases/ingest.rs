@@ -1,30 +1,42 @@
 use std::sync::Arc;
 use tokio::{sync::{Mutex, mpsc}};
-use crate::{application::TransactionSource, domain::SolanaTransaction};
+use crate::{
+    application::{TransactionSource, TransactionParser}, 
+    domain::{SolanaTransaction}
+};
 
 pub struct IngestionPipeline{
-    // Dependency injection using Trait Object
     source: Arc<Mutex<dyn TransactionSource>>,
+    parsers: Vec<Arc<dyn TransactionParser>>,
 }
 
 impl IngestionPipeline {
-    pub fn new(source:Arc<Mutex<dyn TransactionSource>>)->Self{
-        Self { source }
+    pub fn new(
+        source: Arc<Mutex<dyn TransactionSource>>,
+        parsers: Vec<Arc<dyn TransactionParser>>
+    ) -> Self {
+        Self { source, parsers }
     }
 
     pub async fn run(&self){
-        // ring buffer
-        let (tx,mut rx) = mpsc::channel::<SolanaTransaction>(1000);
+        let (tx, mut rx) = mpsc::channel::<SolanaTransaction>(1000);
 
-        // Spawing Consumer 
+        // Consumer loop
+        let parsers_clone = self.parsers.clone();
         let handle = tokio::spawn(async move {
-            while let Some(tx) = rx.recv().await {
-                // parsing & DB write happen here
-                println!("Processed transaction: {:?}", tx.signature);
+            while let Some(txn) = rx.recv().await {
+                tracing::info!("Consumer received transaction: {}", txn.signature);
+                // Run all parsers
+                for parser in &parsers_clone {
+                    if let Some(events) = parser.parse(&txn) {
+                        for event in events {
+                            tracing::info!("Parser [{}] found event: {:?}", parser.name(), event);
+                        }
+                    }
+                }
             }
             println!("Consumer finished");
         });
-
 
         // Producer loop
         let source_clone = self.source.clone();
@@ -34,12 +46,13 @@ impl IngestionPipeline {
 
             match tx_next {
                 Ok(Some(txn))=>{
+                    tracing::info!("Producer sending transaction: {}", txn.signature);
                     if let Err(_) = tx.send(txn).await {
                         break;
                     }
                 },
                 Ok(None)=>{
-                    println!("Stream finished.");
+                    tracing::info!("Source reached end of stream.");
                     break;
                 },
                 Err(err)=>{
@@ -48,5 +61,7 @@ impl IngestionPipeline {
                 }
             }
         }
+        
+        let _ = handle.await;
     }
 }

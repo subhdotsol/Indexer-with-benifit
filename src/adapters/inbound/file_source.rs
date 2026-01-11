@@ -1,10 +1,9 @@
 use std::time::Duration;
 use async_trait::async_trait;
 use tokio::{time::sleep};
-use crate::{application::{AppResult, TransactionSource}, domain::SolanaTransaction};
+use crate::{application::{AppResult, TransactionSource}, domain::{SolanaTransaction, TxData}};
 
 pub struct FileSourceAdaptor{
-    // We will have BufferReader<File instead>
     current_count:u64,
     max_count:u64
 }
@@ -34,8 +33,9 @@ impl TransactionSource for FileSourceAdaptor{
             SolanaTransaction{
                 success:true,
                 slot: 1000 + self.current_count,
-                raw_bytes: vec![],
+                data: TxData::Grpc(vec![]), // Placeholder for now
                 signature: format!("sig_{}",self.current_count),
+                block_time: Some(chrono::Utc::now().timestamp()),
             }
         ))
     }

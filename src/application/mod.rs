@@ -1,5 +1,5 @@
 mod error;
-mod ports;
+pub mod ports;
 mod use_cases;
 
 pub use error::*;

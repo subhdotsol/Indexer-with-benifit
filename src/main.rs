@@ -4,7 +4,10 @@ mod adapters;
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use crate::{adapters::FileSourceAdaptor, application::IngestionPipeline};
+use crate::{
+    adapters::{FileSourceAdaptor, parsers::{SplTokenParser, RaydiumAmmParser, JupiterParser}}, 
+    application::{IngestionPipeline, TransactionParser}
+};
 
 #[derive(Debug,PartialEq)]
 enum SourceType{
@@ -31,21 +34,26 @@ async fn main()->Result<(),Box<dyn std::error::Error>>{
 
     tracing_subscriber::fmt::init();
 
-    // Default to File for now if env not set, for easier running without .env
-    // But adhering to the reference which requires env
     let source_type = SourceType::from_env().unwrap_or(SourceType::File); 
 
     tracing::info!("Initializing Solana Indexer (Clean Arch)");
 
-    // Dependency Injection
+    // Dependency Injection - Source
     let source = if source_type == SourceType::File {
-        Arc::new(Mutex::new(FileSourceAdaptor::new(50_000)))
-    }else {
+        Arc::new(Mutex::new(FileSourceAdaptor::new(10))) // Reduced count for testing
+    } else {
         panic!("gRPC Source not implemented yet");
     };
 
-    // Ingestion Pipeline, it doesn't know it is reading from what
-    let pipeline = IngestionPipeline::new(source);
+    // Dependency Injection - Parsers
+    let parsers: Vec<Arc<dyn TransactionParser>> = vec![
+        Arc::new(SplTokenParser),
+        Arc::new(RaydiumAmmParser::new()),
+        Arc::new(JupiterParser::new()),
+    ];
+
+    // Ingestion Pipeline
+    let pipeline = IngestionPipeline::new(source, parsers);
 
     tracing::info!("Starting Ingestion Pipeline...");
     pipeline.run().await;
