@@ -1,6 +1,8 @@
 #[derive(Debug)]
-pub enum AppError{
+pub enum AppError {
     InvalidSource,
+    ParseError(String),
+    DatabaseError(String),
 }
 
-pub type AppResult<T> = Result<T,AppError>;
+pub type AppResult<T> = Result<T, AppError>;

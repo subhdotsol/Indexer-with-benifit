@@ -29,3 +29,5 @@ borsh = { version = "1.5.3", features = ["derive"] }
 # gRPC dependencies
 tonic = { version = "0.12.3", features = ["tls", "tls-roots"] }
 tokio-stream = "0.1.17"
+sqlx = { version="0.8.6" , features=["postgres", "runtime-tokio", "chrono", "uuid", "tls-native-tls"]}
+uuid = { version = "1.19.0", features = ["v4"] }

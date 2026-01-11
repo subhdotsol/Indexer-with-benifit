@@ -1,27 +1,27 @@
 use serde::{Deserialize, Serialize};
-use solana_transaction_status::UiTransactionStatusMeta;
 use solana_sdk::transaction::VersionedTransaction;
+use solana_transaction_status::UiTransactionStatusMeta;
 
-#[derive(Debug,Clone)]
-pub enum ChainEvent{
+#[derive(Debug, Clone)]
+pub enum ChainEvent {
     Transaction(SolanaTransaction),
-    BlockMeta{
+    BlockMeta {
         slot: u64,
-        block_hash:String,
-        parent_block_hash:String,
-    }
+        block_hash: String,
+        parent_block_hash: String,
+    },
 }
 
-#[derive(Debug,Serialize,Deserialize,Clone)]
-pub enum TransactionEvent{
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum TransactionEvent {
     TokenTransfer(TokenTransfer),
     RaydiumSwap(RaydiumSwapEvent),
     JupiterSwap(JupiterSwapEvent),
     PumpFunSwap(PumpFunSwapEvent),
 }
 
-#[derive(Debug,Serialize,Deserialize,Clone)]
-pub struct TokenTransfer{
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TokenTransfer {
     pub from: String,
     pub to: String,
     pub slot: u64,
@@ -78,19 +78,19 @@ pub struct PumpFunSwapEvent {
     pub bonding_curve: String,
 }
 
-#[derive(Debug,Clone,Serialize,Deserialize)]
-pub struct SolanaTransaction{
-    pub signature:String,
-    pub success:bool,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SolanaTransaction {
+    pub signature: String,
+    pub success: bool,
     pub slot: u64,
     pub data: TxData,
     pub block_time: Option<i64>,
 }
 
-#[derive(Debug,Clone,Deserialize,Serialize)]
-pub enum TxData{
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub enum TxData {
     Grpc(Vec<u8>), // From gRPC
-    Rpc{
+    Rpc {
         tx: VersionedTransaction,
         meta: UiTransactionStatusMeta,
     }, // From RPC
