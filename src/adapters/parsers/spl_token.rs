@@ -27,10 +27,19 @@ impl TransactionParser for SplTokenParser {
                         let tx_details = tx_info.transaction.unwrap();
                         let signature = bs58::encode(&tx_details.signature).into_string();
                         let message = tx_details.transaction.unwrap().message.unwrap();
+                        let meta = tx_details.meta.unwrap();
                         
-                        let account_keys = message.account_keys.iter().map(|account| {
+                        let mut account_keys = message.account_keys.iter().map(|account| {
                             bs58::encode(account).into_string()
                         }).collect::<Vec<String>>();
+
+                        // Resolve Address Lookup Tables (ALTs)
+                        for addr in meta.loaded_writable_addresses {
+                            account_keys.push(bs58::encode(addr).into_string());
+                        }
+                        for addr in meta.loaded_readonly_addresses {
+                            account_keys.push(bs58::encode(addr).into_string());
+                        }
 
                         let token_program_index = account_keys.iter().position(|k| k == Self::TOKEN_PROGRAM_ID);
 

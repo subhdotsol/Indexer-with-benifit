@@ -5,8 +5,8 @@ mod adapters;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use crate::{
-    adapters::{FileSourceAdaptor, parsers::{SplTokenParser, RaydiumAmmParser, JupiterParser}}, 
-    application::{IngestionPipeline, TransactionParser}
+    adapters::{FileSourceAdaptor, GrpcSourceAdaptor, parsers::{SplTokenParser, RaydiumAmmParser, JupiterParser}}, 
+    application::{IngestionPipeline, TransactionParser, TransactionSource}
 };
 
 #[derive(Debug,PartialEq)]
@@ -39,10 +39,13 @@ async fn main()->Result<(),Box<dyn std::error::Error>>{
     tracing::info!("Initializing Solana Indexer (Clean Arch)");
 
     // Dependency Injection - Source
-    let source = if source_type == SourceType::File {
-        Arc::new(Mutex::new(FileSourceAdaptor::new(10))) // Reduced count for testing
+    let source: Arc<Mutex<dyn TransactionSource>> = if source_type == SourceType::File {
+        tracing::info!("Using simulated File Source");
+        Arc::new(Mutex::new(FileSourceAdaptor::new(10)))
     } else {
-        panic!("gRPC Source not implemented yet");
+        let endpoint = std::env::var("GRPC_ENDPOINT").expect("GRPC_ENDPOINT must be set");
+        let token = std::env::var("X_TOKEN").ok();
+        Arc::new(Mutex::new(GrpcSourceAdaptor::connect(endpoint, token).await.expect("Failed to connect to gRPC")))
     };
 
     // Dependency Injection - Parsers

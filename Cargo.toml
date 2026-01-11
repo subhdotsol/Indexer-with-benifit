@@ -25,3 +25,7 @@ prost = "0.13.0"
 bs58 = "0.5.1"
 bincode = "1.3.3"
 borsh = { version = "1.5.3", features = ["derive"] }
+
+# gRPC dependencies
+tonic = { version = "0.12.3", features = ["tls", "tls-roots"] }
+tokio-stream = "0.1.17"
