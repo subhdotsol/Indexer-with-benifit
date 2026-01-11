@@ -97,6 +97,6 @@ pub enum TxData {
     Raw(Vec<u8>),
 }
 
-pub const RAYDIUM_V4_PROGRAM_ID: &'static str = "675k1P952h926S9fXN1v8B2YyW6QiX48zSt5q35XV55";
+pub const RAYDIUM_V4_PROGRAM_ID: &'static str = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
 pub const JUP_PROGRAM_ID: &'static str = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
-pub const PUMP_FUN_PROGRAM_ID: &'static str = "6EF8rrecthR5DkZ9G5zE4v5Yp9h1hR143r166h7qBPrL"; // Pump.fun Program ID
+pub const PUMP_FUN_PROGRAM_ID: &'static str = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"; // Pump.fun Bonding Curve (mainnet)
