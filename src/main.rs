@@ -5,7 +5,7 @@ mod adapters;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use crate::{
-    adapters::{FileSourceAdaptor, GrpcSourceAdaptor, parsers::{SplTokenParser, RaydiumAmmParser, JupiterParser}}, 
+    adapters::{FileSourceAdaptor, GrpcSourceAdaptor, parsers::{SplTokenParser, RaydiumAmmParser, JupiterParser, PumpFunParser}}, 
     application::{IngestionPipeline, TransactionParser, TransactionSource}
 };
 
@@ -53,6 +53,7 @@ async fn main()->Result<(),Box<dyn std::error::Error>>{
         Arc::new(SplTokenParser),
         Arc::new(RaydiumAmmParser::new()),
         Arc::new(JupiterParser::new()),
+        Arc::new(PumpFunParser::new()),
     ];
 
     // Ingestion Pipeline

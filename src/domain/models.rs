@@ -17,6 +17,7 @@ pub enum TransactionEvent{
     TokenTransfer(TokenTransfer),
     RaydiumSwap(RaydiumSwapEvent),
     JupiterSwap(JupiterSwapEvent),
+    PumpFunSwap(PumpFunSwapEvent),
 }
 
 #[derive(Debug,Serialize,Deserialize,Clone)]
@@ -65,6 +66,18 @@ pub struct RouteStep {
     pub output_index: u8,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PumpFunSwapEvent {
+    pub signature: String,
+    pub slot: u64,
+    pub signer: String,
+    pub mint: String,
+    pub is_buy: bool,
+    pub sol_amount: u64,
+    pub token_amount: u64,
+    pub bonding_curve: String,
+}
+
 #[derive(Debug,Clone,Serialize,Deserialize)]
 pub struct SolanaTransaction{
     pub signature:String,
@@ -86,3 +99,4 @@ pub enum TxData{
 
 pub const RAYDIUM_V4_PROGRAM_ID: &'static str = "675k1P952h926S9fXN1v8B2YyW6QiX48zSt5q35XV55";
 pub const JUP_PROGRAM_ID: &'static str = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
+pub const PUMP_FUN_PROGRAM_ID: &'static str = "6EF8rrecthR5DkZ9G5zE4v5Yp9h1hR143r166h7qBPrL"; // Pump.fun Program ID
