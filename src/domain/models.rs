@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
+use solana_client::rpc_response::UiTransactionStatusMeta;
 use solana_sdk::transaction::VersionedTransaction;
-use solana_transaction_status::UiTransactionStatusMeta;
+
+use crate::domain::TokenTransfer;
 
 #[derive(Debug, Clone)]
 pub enum ChainEvent {
@@ -17,36 +19,52 @@ pub enum TransactionEvent {
     TokenTransfer(TokenTransfer),
     RaydiumSwap(RaydiumSwapEvent),
     JupiterSwap(JupiterSwapEvent),
-    PumpFunSwap(PumpFunSwapEvent),
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct TokenTransfer {
-    pub from: String,
-    pub to: String,
-    pub slot: u64,
-    pub amount: u64,
-    pub signature: String,
-    pub mint: Option<String>,
+    PumpFunTrade(PumpFunTrade),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RaydiumSwapEvent {
-    pub amm_pool: String,
-    pub signer: String,
-    pub amount_in: u64,
-    pub min_amount_out: u64,
-    pub amount_received: u64,
-    pub mint_source: String,
-    pub mint_destination: String,
-    pub slot: u64,
+pub enum SwapEvent {
+    Raydium(RaydiumSwapEvent),
+    Jupiter(JupiterSwapEvent),
+    PumpFun(PumpFunTrade),
+}
+
+impl SwapEvent {
+    pub fn amount_in(&self) -> u64 {
+        match self {
+            Self::Raydium(swap) => swap.amount_in,
+            Self::Jupiter(swap) => swap.amount_in,
+            Self::PumpFun(trade) => trade.sol_amount,
+        }
+    }
+
+    pub fn signature(&self) -> &str {
+        match self {
+            Self::Raydium(swap) => &swap.signature,
+            Self::Jupiter(swap) => &swap.signature,
+            Self::PumpFun(trade) => &trade.signature,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PumpFunTrade {
     pub signature: String,
+    pub slot: u64,
+    pub mint: String,
+    pub is_buy: bool,
+    pub user: String,
+    pub timestamp: i64,
+    pub token_amount: u64,
+    pub sol_amount: u64,
+    pub block_time: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JupiterSwapEvent {
     pub signature: String,
     pub slot: u64,
+    pub block_time: i64,
     pub signer: String,
     pub amm_pool: String,
     pub mint_in: String,
@@ -66,37 +84,40 @@ pub struct RouteStep {
     pub output_index: u8,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PumpFunSwapEvent {
-    pub signature: String,
-    pub slot: u64,
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RaydiumSwapEvent {
+    pub amm_pool: String,
     pub signer: String,
-    pub mint: String,
-    pub is_buy: bool,
-    pub sol_amount: u64,
-    pub token_amount: u64,
-    pub bonding_curve: String,
+    pub amount_in: u64,
+    pub min_amount_out: u64,
+    pub amount_received: u64,
+    pub mint_source: String,
+    pub mint_destination: String,
+    pub slot: u64,
+    pub block_time: i64,
+    pub signature: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SolanaTransaction {
     pub signature: String,
     pub success: bool,
-    pub slot: u64,
     pub data: TxData,
-    pub block_time: Option<i64>,
+    pub slot: u64,
+    pub block_time: i64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum TxData {
-    Grpc(Vec<u8>), // From gRPC
+    Grpc(Vec<u8>),
     Rpc {
         tx: VersionedTransaction,
         meta: UiTransactionStatusMeta,
-    }, // From RPC
-    Raw(Vec<u8>),
+    },
 }
 
-pub const RAYDIUM_V4_PROGRAM_ID: &'static str = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
-pub const JUP_PROGRAM_ID: &'static str = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
-pub const PUMP_FUN_PROGRAM_ID: &'static str = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"; // Pump.fun Bonding Curve (mainnet)
+#[derive(Debug, Clone)]
+pub struct IndexerState {
+    pub last_slot: u64,
+    pub last_block_hash: String,
+}
