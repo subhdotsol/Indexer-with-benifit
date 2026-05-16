@@ -1,8 +1,7 @@
-use async_trait::async_trait;
+use anyhow::Result;
 use crate::domain::{SolanaTransaction, TransactionEvent};
 
-#[async_trait]
 pub trait TransactionParser: Send + Sync {
-    fn parse(&self, txn: &SolanaTransaction) -> Option<Vec<TransactionEvent>>;
+    fn parse(&self, txn: SolanaTransaction) -> Result<Option<Vec<TransactionEvent>>>;
     fn name(&self) -> &str;
 }
