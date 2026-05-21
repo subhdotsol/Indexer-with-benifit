@@ -1,6 +1,6 @@
 mod inbound;
 mod outbound;
-pub mod parsers;
+mod parsers;
 
 pub use inbound::*;
 pub use outbound::*;
