@@ -1,111 +1,158 @@
-use yellowstone_grpc_proto::geyser::SubscribeUpdate;
+use std::sync::Arc;
+
+use anyhow::Result;
 use prost::Message;
+use solana_sdk::pubkey::Pubkey;
+use yellowstone_grpc_proto::geyser::SubscribeUpdate;
+use yellowstone_vixen_core::{Parser, instruction::{InstructionShared, InstructionUpdate}};
+use yellowstone_vixen_proc_macro::include_vixen_parser;
+
 use crate::{
-    application::ports::parser::TransactionParser,
-    domain::{SolanaTransaction, TransactionEvent, PumpFunSwapEvent, TxData, PUMP_FUN_PROGRAM_ID},
+    adapters::parsers::VixenUtils,
+    application::TransactionParser,
+    domain::{self, PumpFunTrade, SolanaTransaction, TransactionEvent, TxData},
 };
+
+include_vixen_parser!("idls/pump_fun.json");
 
 pub struct PumpFunParser;
 
 impl PumpFunParser {
     pub fn new() -> Self { Self }
 
-    const BUY_DISCRIMINATOR: [u8; 8] = [102, 6, 61, 18, 1, 218, 235, 234];
-    const SELL_DISCRIMINATOR: [u8; 8] = [51, 230, 133, 164, 1, 127, 131, 173];
+    /// Sum SOL sent FROM a specific account in System Program Transfer inner ixs
+    fn sol_sent_from(inner_ixs: &[InstructionUpdate], from: &yellowstone_vixen_parser::Pubkey) -> u64 {
+        let system_pgm = [0u8; 32];
+        let mut total = 0u64;
+
+        for ix in inner_ixs {
+            if ix.program.0 != system_pgm || ix.data.len() < 12 { continue; }
+            if u32::from_le_bytes(ix.data[0..4].try_into().unwrap()) != 2 { continue; }
+            if ix.accounts.get(0) == Some(from) {
+                total = total.saturating_add(u64::from_le_bytes(ix.data[4..12].try_into().unwrap()));
+            }
+        }
+        total
+    }
+
+    /// Read SOL balance change for a given account index from pre/post balances
+    fn sol_received_from_balances(idx: usize, pre: &[u64], post: &[u64]) -> u64 {
+        post.get(idx).copied().unwrap_or(0)
+            .saturating_sub(pre.get(idx).copied().unwrap_or(0))
+    }
+
+    fn parse_protobuf(&self, raw_bytes: &[u8], block_time: i64) -> Result<Option<Vec<TransactionEvent>>> {
+        let update = match SubscribeUpdate::decode(raw_bytes) {
+            Ok(u) => u,
+            Err(_) => return Ok(None),
+        };
+
+        if let Some(yellowstone_grpc_proto::geyser::subscribe_update::UpdateOneof::Transaction(tx_info)) = update.update_oneof {
+            let slot = tx_info.slot;
+            let tx_details = match tx_info.transaction { Some(t) => t, None => return Ok(None) };
+            let sig_bytes = tx_details.signature;
+            let sig_str = bs58::encode(&sig_bytes).into_string();
+            let meta = match tx_details.meta { Some(m) => m, None => return Ok(None) };
+            let message = match tx_details.transaction.and_then(|t| t.message) { Some(m) => m, None => return Ok(None) };
+
+            let all_accounts = VixenUtils::extract_accounts_from_grpc(
+                &message.account_keys,
+                &meta.loaded_writable_addresses,
+                &meta.loaded_readonly_addresses,
+            );
+
+            let mut events = Vec::new();
+
+            for (ix_idx, ix) in message.instructions.iter().enumerate() {
+                let pgm_idx = ix.program_id_index as usize;
+                if pgm_idx >= all_accounts.len() { continue; }
+                if all_accounts[pgm_idx].to_string() != domain::PUMP_FUN_PROGRAM_ID { continue; }
+
+                let shared = Arc::new(InstructionShared {
+                    signature: sig_bytes.clone(),
+                    slot,
+                    ..Default::default()
+                });
+
+                let vixen_accounts: Vec<yellowstone_vixen_parser::Pubkey> = ix.accounts.iter()
+                    .filter_map(|&i| all_accounts.get(i as usize))
+                    .map(|a| yellowstone_vixen_parser::Pubkey::from(a.to_bytes()))
+                    .collect();
+
+                let inner_group = match meta.inner_instructions.iter().find(|g| g.index == ix_idx as u32) {
+                    Some(g) => g,
+                    None => continue,
+                };
+
+                let inner = match VixenUtils::convert_protobuf_inner_instruction(&inner_group.instructions, &all_accounts, shared.clone()) {
+                    Some(v) => v,
+                    None => continue,
+                };
+
+                let instruction_update = InstructionUpdate {
+                    program: yellowstone_vixen_parser::Pubkey::from(all_accounts[pgm_idx].to_bytes()),
+                    accounts: vixen_accounts,
+                    data: ix.data.clone(),
+                    shared,
+                    inner,
+                };
+
+                let parsed = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(pump::InstructionParser.parse(&instruction_update))
+                });
+
+                match parsed {
+                    Ok(pump::PumpInstruction::Buy { accounts, args }) => {
+                        let sol_spent = Self::sol_sent_from(&instruction_update.inner, &accounts.user);
+                        events.push(TransactionEvent::PumpFunTrade(PumpFunTrade {
+                            signature: sig_str.clone(),
+                            slot,
+                            block_time,
+                            timestamp: block_time,
+                            mint: accounts.mint.to_string(),
+                            is_buy: true,
+                            user: accounts.user.to_string(),
+                            token_amount: args.amount,
+                            sol_amount: sol_spent,
+                        }));
+                    }
+                    Ok(pump::PumpInstruction::Sell { accounts, args }) => {
+                        let user_pubkey = Pubkey::try_from(accounts.user.0).ok();
+                        let user_idx = user_pubkey.and_then(|pk| all_accounts.iter().position(|a| *a == pk));
+                        let sol_received = user_idx
+                            .map(|i| Self::sol_received_from_balances(i, &meta.pre_balances, &meta.post_balances))
+                            .unwrap_or(0);
+
+                        events.push(TransactionEvent::PumpFunTrade(PumpFunTrade {
+                            signature: sig_str.clone(),
+                            slot,
+                            block_time,
+                            timestamp: block_time,
+                            mint: accounts.mint.to_string(),
+                            is_buy: false,
+                            user: accounts.user.to_string(),
+                            token_amount: args.amount,
+                            sol_amount: sol_received,
+                        }));
+                    }
+                    _ => {}
+                }
+            }
+
+            if !events.is_empty() { return Ok(Some(events)); }
+        }
+
+        Ok(None)
+    }
 }
 
 impl TransactionParser for PumpFunParser {
-    fn name(&self) -> &str {
-        "PumpFunParser"
-    }
+    fn name(&self) -> &str { "pump_fun" }
 
-    fn parse(&self, txn: &SolanaTransaction) -> Option<Vec<TransactionEvent>> {
-        let mut events = Vec::new();
-
-        match &txn.data {
-            TxData::Grpc(bytes) => {
-                if let Ok(update) = SubscribeUpdate::decode(bytes.as_slice()) {
-                    if let Some(yellowstone_grpc_proto::geyser::subscribe_update::UpdateOneof::Transaction(tx_info)) = update.update_oneof {
-                        let slot = tx_info.slot;
-                        let tx_details = tx_info.transaction.unwrap();
-                        let signature = bs58::encode(&tx_details.signature).into_string();
-                        let message = tx_details.transaction.unwrap().message.unwrap();
-                        
-                        let account_keys = message.account_keys.iter().map(|k| bs58::encode(k).into_string()).collect::<Vec<String>>();
-
-                        if let Some(pump_pgm_idx) = account_keys.iter().position(|k| k == PUMP_FUN_PROGRAM_ID) {
-                            let pump_pgm_idx = pump_pgm_idx as u32;
-
-                            for ix in message.instructions {
-                                if ix.program_id_index == pump_pgm_idx {
-                                    if ix.data.len() < 8 { continue; }
-                                    
-                                    let discriminator = &ix.data[0..8];
-                                    
-                                    if discriminator == Self::BUY_DISCRIMINATOR {
-                                        // Buy Accounts: [global, fee_recipient, mint, bonding_curve, associated_bonding_curve, associated_user, user, ...]
-                                        if ix.accounts.len() < 7 { continue; }
-                                        if ix.data.len() < 24 { continue; }
-
-                                        let mut amount_bytes = [0u8; 8];
-                                        amount_bytes.copy_from_slice(&ix.data[8..16]);
-                                        let token_amount = u64::from_le_bytes(amount_bytes);
-
-                                        let mut sol_bytes = [0u8; 8];
-                                        sol_bytes.copy_from_slice(&ix.data[16..24]);
-                                        let max_sol_cost = u64::from_le_bytes(sol_bytes);
-
-                                        let mint_idx = ix.accounts[2] as usize;
-                                        let bonding_curve_idx = ix.accounts[3] as usize;
-                                        let user_idx = ix.accounts[6] as usize;
-
-                                        events.push(TransactionEvent::PumpFunSwap(PumpFunSwapEvent {
-                                            signature: signature.clone(),
-                                            slot,
-                                            signer: account_keys[user_idx].clone(),
-                                            mint: account_keys[mint_idx].clone(),
-                                            is_buy: true,
-                                            sol_amount: max_sol_cost, // This is max_sol, might want to refine with actual cost from inner ixs or logs later
-                                            token_amount,
-                                            bonding_curve: account_keys[bonding_curve_idx].clone(),
-                                        }));
-                                    } else if discriminator == Self::SELL_DISCRIMINATOR {
-                                        // Sell Accounts: [global, fee_recipient, mint, bonding_curve, associated_bonding_curve, associated_user, user, ...]
-                                        if ix.accounts.len() < 7 { continue; }
-                                        if ix.data.len() < 24 { continue; }
-
-                                        let mut amount_bytes = [0u8; 8];
-                                        amount_bytes.copy_from_slice(&ix.data[8..16]);
-                                        let token_amount = u64::from_le_bytes(amount_bytes);
-
-                                        let mut sol_bytes = [0u8; 8];
-                                        sol_bytes.copy_from_slice(&ix.data[16..24]);
-                                        let min_sol_output = u64::from_le_bytes(sol_bytes);
-
-                                        let mint_idx = ix.accounts[2] as usize;
-                                        let bonding_curve_idx = ix.accounts[3] as usize;
-                                        let user_idx = ix.accounts[6] as usize;
-
-                                        events.push(TransactionEvent::PumpFunSwap(PumpFunSwapEvent {
-                                            signature: signature.clone(),
-                                            slot,
-                                            signer: account_keys[user_idx].clone(),
-                                            mint: account_keys[mint_idx].clone(),
-                                            is_buy: false,
-                                            sol_amount: min_sol_output,
-                                            token_amount,
-                                            bonding_curve: account_keys[bonding_curve_idx].clone(),
-                                        }));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            _ => {}
+    fn parse(&self, txn: SolanaTransaction) -> Result<Option<Vec<TransactionEvent>>> {
+        match txn.data {
+            TxData::Grpc(bytes) => self.parse_protobuf(&bytes, txn.block_time),
+            TxData::Rpc { .. } => Ok(None), // RPC backfill not yet supported for PumpFun
         }
-
-        if events.is_empty() { None } else { Some(events) }
     }
 }
