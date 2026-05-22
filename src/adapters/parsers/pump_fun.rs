@@ -4,7 +4,7 @@ use anyhow::Result;
 use prost::Message;
 use solana_sdk::pubkey::Pubkey;
 use yellowstone_grpc_proto::geyser::SubscribeUpdate;
-use yellowstone_vixen_core::{Parser, instruction::{InstructionShared, InstructionUpdate}};
+use yellowstone_vixen_core::{Parser, instruction::{InstructionShared, InstructionUpdate, Path}};
 use yellowstone_vixen_proc_macro::include_vixen_parser;
 
 use crate::{
@@ -95,6 +95,8 @@ impl PumpFunParser {
                     data: ix.data.clone(),
                     shared,
                     inner,
+                    path: Path::from(vec![]),
+                    log_range: 0..0,
                 };
 
                 let parsed = tokio::task::block_in_place(|| {
@@ -102,7 +104,7 @@ impl PumpFunParser {
                 });
 
                 match parsed {
-                    Ok(pump::PumpInstruction::Buy { accounts, args }) => {
+                    Ok(pump::Instructions { instruction: pump::instruction::Instruction::Buy { accounts, args } }) => {
                         let sol_spent = Self::sol_sent_from(&instruction_update.inner, &accounts.user);
                         events.push(TransactionEvent::PumpFunTrade(PumpFunTrade {
                             signature: sig_str.clone(),
@@ -116,7 +118,7 @@ impl PumpFunParser {
                             sol_amount: sol_spent,
                         }));
                     }
-                    Ok(pump::PumpInstruction::Sell { accounts, args }) => {
+                    Ok(pump::Instructions { instruction: pump::instruction::Instruction::Sell { accounts, args } }) => {
                         let user_pubkey = Pubkey::try_from(accounts.user.0).ok();
                         let user_idx = user_pubkey.and_then(|pk| all_accounts.iter().position(|a| *a == pk));
                         let sol_received = user_idx

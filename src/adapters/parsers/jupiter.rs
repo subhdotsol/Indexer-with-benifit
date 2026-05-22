@@ -2,11 +2,10 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use prost::Message;
-use solana_client::rpc_response::OptionSerializer;
 use solana_sdk::{pubkey::Pubkey, transaction::VersionedTransaction};
-use solana_client::rpc_response::UiTransactionStatusMeta;
+use solana_transaction_status::{UiTransactionStatusMeta, option_serializer::OptionSerializer};
 use yellowstone_grpc_proto::geyser::SubscribeUpdate;
-use yellowstone_vixen_core::{Parser, instruction::{InstructionShared, InstructionUpdate}};
+use yellowstone_vixen_core::{Parser, instruction::{InstructionShared, InstructionUpdate, Path}};
 use yellowstone_vixen_proc_macro::include_vixen_parser;
 
 use crate::{
@@ -88,6 +87,8 @@ impl JupiterVixenParser {
                     data: ix.data.clone(),
                     shared,
                     inner,
+                    path: Path::from(vec![]),
+                    log_range: 0..0,
                 };
 
                 let parsed = tokio::task::block_in_place(|| {
@@ -95,7 +96,7 @@ impl JupiterVixenParser {
                 });
 
                 match parsed {
-                    Ok(jupiter_v6::Jupiter_v6Instruction::Route { accounts, args }) => {
+                    Ok(jupiter_v6::Instructions { instruction: jupiter_v6::instruction::Instruction::Route { accounts, args } }) => {
                         let mint_in = VixenUtils::get_mint(&accounts.user_source_token_account, &all_accounts, &pre_balances);
                         events.push(TransactionEvent::JupiterSwap(JupiterSwapEvent {
                             amm_pool: "Jupiter V6".to_string(),
@@ -112,7 +113,7 @@ impl JupiterVixenParser {
                             slippage_bps: args.slippage_bps,
                         }));
                     }
-                    Ok(jupiter_v6::Jupiter_v6Instruction::SharedAccountsRoute { accounts, args }) => {
+                    Ok(jupiter_v6::Instructions { instruction: jupiter_v6::instruction::Instruction::SharedAccountsRoute { accounts, args } }) => {
                         events.push(TransactionEvent::JupiterSwap(JupiterSwapEvent {
                             amm_pool: "Jupiter V6 Shared".to_string(),
                             signer: accounts.user_transfer_authority.to_string(),
@@ -180,7 +181,7 @@ impl JupiterVixenParser {
             });
 
             match parsed {
-                Ok(jupiter_v6::Jupiter_v6Instruction::Route { accounts, args }) => {
+                Ok(jupiter_v6::Instructions { instruction: jupiter_v6::instruction::Instruction::Route { accounts, args } }) => {
                     let mint_in = VixenUtils::get_mint(&accounts.user_source_token_account, &all_accounts, &meta.pre_token_balances);
                     events.push(TransactionEvent::JupiterSwap(JupiterSwapEvent {
                         amm_pool: "Jupiter V6".to_string(),
@@ -197,7 +198,7 @@ impl JupiterVixenParser {
                         slippage_bps: args.slippage_bps,
                     }));
                 }
-                Ok(jupiter_v6::Jupiter_v6Instruction::SharedAccountsRoute { accounts, args }) => {
+                Ok(jupiter_v6::Instructions { instruction: jupiter_v6::instruction::Instruction::SharedAccountsRoute { accounts, args } }) => {
                     events.push(TransactionEvent::JupiterSwap(JupiterSwapEvent {
                         amm_pool: "Jupiter V6 Shared".to_string(),
                         signer: accounts.user_transfer_authority.to_string(),

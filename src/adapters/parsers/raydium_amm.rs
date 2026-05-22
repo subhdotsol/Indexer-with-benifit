@@ -1,7 +1,7 @@
 use anyhow::Result;
 use borsh::{BorshDeserialize, BorshSerialize};
 use prost::Message;
-use solana_client::rpc_response::{OptionSerializer, UiInnerInstructions, UiInstruction, UiTransactionStatusMeta, UiTransactionTokenBalance};
+use solana_transaction_status::{UiInnerInstructions, UiInstruction, UiTransactionStatusMeta, UiTransactionTokenBalance, option_serializer::OptionSerializer};
 use solana_sdk::transaction::VersionedTransaction;
 use yellowstone_grpc_proto::{geyser::SubscribeUpdate, prelude::TokenBalance};
 
@@ -113,8 +113,9 @@ impl RaydiumAmmParser {
 
                 let amount_received = Self::find_cpi_amount_rpc(ix_idx, dst_idx, &meta.inner_instructions).unwrap_or(0);
 
-                let pre  = meta.pre_token_balances.as_deref().unwrap_or(&[]);
-                let post = meta.post_token_balances.as_deref().unwrap_or(&[]);
+                let empty: Vec<UiTransactionTokenBalance> = vec![];
+                let pre  = if let OptionSerializer::Some(v) = &meta.pre_token_balances  { v.as_slice() } else { &empty };
+                let post = if let OptionSerializer::Some(v) = &meta.post_token_balances { v.as_slice() } else { &empty };
                 let mint_source      = Self::resolve_mint_rpc(src_idx, pre, post);
                 let mint_destination = Self::resolve_mint_rpc(dst_idx, pre, post);
 

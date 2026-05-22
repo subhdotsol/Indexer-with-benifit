@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use solana_client::rpc_response::UiTransactionStatusMeta;
+use solana_transaction_status::UiTransactionStatusMeta;
 use solana_sdk::transaction::VersionedTransaction;
 
 use crate::domain::TokenTransfer;

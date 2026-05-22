@@ -1,11 +1,9 @@
 use std::sync::Arc;
 
 use futures::{StreamExt, stream};
-use solana_client::{
-    rpc_client::RpcClient,
-    rpc_config::CommitmentConfig,
-    rpc_response::EncodedTransactionWithStatusMeta,
-};
+use solana_client::rpc_client::RpcClient;
+use solana_sdk::commitment_config::CommitmentConfig;
+use solana_transaction_status::EncodedTransactionWithStatusMeta;
 
 use crate::{
     application::EventBuffer,

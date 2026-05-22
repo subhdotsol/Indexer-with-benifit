@@ -1,7 +1,7 @@
 use anyhow::Result;
 use borsh::BorshDeserialize;
 use prost::Message;
-use solana_client::rpc_response::{OptionSerializer, UiInstruction, UiParsedInstruction, UiTransactionStatusMeta};
+use solana_transaction_status::{UiInstruction, UiTransactionStatusMeta, option_serializer::OptionSerializer};
 use solana_sdk::transaction::VersionedTransaction;
 use yellowstone_grpc_proto::geyser::SubscribeUpdate;
 

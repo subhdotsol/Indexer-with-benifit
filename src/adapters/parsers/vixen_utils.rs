@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
-use solana_client::rpc_response::{OptionSerializer, UiInnerInstructions, UiInstruction, UiParsedInstruction, UiTransactionTokenBalance};
+use solana_account_decoder_client_types::token::UiTokenAmount;
+use solana_transaction_status::{UiInnerInstructions, UiInstruction, UiParsedInstruction, UiTransactionTokenBalance, option_serializer::OptionSerializer};
 use solana_sdk::pubkey::Pubkey;
 use yellowstone_grpc_proto::prelude::InnerInstruction;
-use yellowstone_vixen_core::instruction::{InstructionShared, InstructionUpdate};
+use yellowstone_vixen_core::instruction::{InstructionShared, InstructionUpdate, Path};
 
 pub struct VixenUtils;
 
@@ -32,6 +33,8 @@ impl VixenUtils {
                     inner: vec![],
                     accounts: accs,
                     program: yellowstone_vixen_parser::Pubkey::from(pgm.to_bytes()),
+                    path: Path::from(vec![]),
+                    log_range: 0..0,
                 })
             })
             .collect();
@@ -62,6 +65,8 @@ impl VixenUtils {
                     data,
                     shared,
                     inner: vec![],
+                    path: Path::from(vec![]),
+                    log_range: 0..0,
                 })
             }
             UiInstruction::Parsed(parsed) => match parsed {
@@ -81,6 +86,8 @@ impl VixenUtils {
                         data,
                         shared,
                         inner: vec![],
+                        path: Path::from(vec![]),
+                        log_range: 0..0,
                     })
                 }
                 UiParsedInstruction::Parsed(_) => {
@@ -122,6 +129,8 @@ impl VixenUtils {
             data: data.to_vec(),
             shared,
             inner,
+            path: Path::from(vec![]),
+            log_range: 0..0,
         }
     }
 
@@ -135,7 +144,7 @@ impl VixenUtils {
                 .map(|b| UiTransactionTokenBalance {
                     account_index: b.account_index as u8,
                     mint: b.mint.clone(),
-                    ui_token_amount: solana_client::rpc_response::UiTokenAmount {
+                    ui_token_amount: UiTokenAmount {
                         ui_amount: b.ui_token_amount.as_ref().and_then(|a| Some(a.ui_amount)),
                         decimals: b.ui_token_amount.as_ref().map(|a| a.decimals as u8).unwrap_or(0),
                         amount: b.ui_token_amount.as_ref().map(|a| a.amount.clone()).unwrap_or_default(),
