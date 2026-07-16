@@ -1,6 +1,0 @@
-/target
-.env
-node_modules
-test-ledger
-yellowstone-grpc
-scripts/dist
