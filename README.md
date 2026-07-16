@@ -19,48 +19,7 @@ A high-performance Solana blockchain indexer written in Rust. Ingests transactio
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         INBOUND SOURCES                             │
-│                                                                     │
-│   ┌──────────────────┐  ┌─────────────────┐  ┌──────────────────┐  │
-│   │ Yellowstone gRPC │  │  File Replay    │  │  RPC Backfill    │  │
-│   │ (live stream)    │  │  (raw bytes)    │  │  (historical)    │  │
-│   └────────┬─────────┘  └────────┬────────┘  └────────┬─────────┘  │
-│            └───────────────────┬─┘──────────────────────┘           │
-│                                │  TransactionSource trait           │
-└────────────────────────────────┼────────────────────────────────────┘
-                                 ▼  ChainEvent
-                  ┌──────────────────────────────┐
-                  │  MemoryBuffer                │
-                  │  tokio mpsc · cap 50 000     │
-                  └──────────────┬───────────────┘
-                                 ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                       INGESTION PIPELINE                            │
-│              batch 100 events · flush every 1 s                     │
-│                                                                     │
-│  ┌─────────────┐ ┌──────────────┐ ┌──────────────┐ ┌────────────┐  │
-│  │  SPL Token  │ │ Raydium AMM  │ │   Jupiter    │ │  Pump.fun  │  │
-│  │  Transfer   │ │    Swap      │ │  Vixen IDL   │ │   Trade    │  │
-│  └─────────────┘ └──────────────┘ └──────────────┘ └────────────┘  │
-│                                                                     │
-│  ✓ parse ok  →  batch               ✗ parse err  →  DLQ            │
-│  ⬆ high-value swap  →  notification queue                           │
-└───────────────────┬─────────────────────────────┬───────────────────┘
-                    │                             │
-                    ▼                             ▼
-     ┌──────────────────────────┐   ┌─────────────────────────┐
-     │  PostgreSQL · sqlx       │   │  Telegram Bot           │
-     │                          │   │                         │
-     │  token_transfers         │   │  whale alert            │
-     │  raydium_swaps           │   │  threshold: 1 SOL       │
-     │  jupiter_swaps           │   │  async queue            │
-     │  pump_fun_trades         │   │                         │
-     │  dlq_events              │   │  optional — disabled    │
-     │  indexer_state ← slot    │   │  if token not set       │
-     └──────────────────────────┘   └─────────────────────────┘
-```
+<img width="914" height="1101" alt="Screenshot 2026-07-16 at 12 42 22 AM" src="https://github.com/user-attachments/assets/68541455-20fd-4d90-a626-05aa458ed942" />
 
 ## Quick Start
 
