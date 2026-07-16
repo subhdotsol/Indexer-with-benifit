@@ -1,8 +1,8 @@
 # Solana Indexer
 
-> **High-Performance Data Ingestion for Solana**
+> **Production-Grade Data Ingestion for Solana**
 
-A production-grade, high-performance Solana blockchain indexer written in Rust. Designed to ingest transactions from various sources (gRPC, RPC, File), parse them into protocol-specific events, and persist them for analytics and monitoring.
+A high-performance Solana blockchain indexer written in Rust. Ingests transactions from multiple sources, parses them into protocol-specific events, and persists them to PostgreSQL — with zero-loss recovery and real-time Telegram alerts.
 
 [![Solana](https://img.shields.io/badge/Solana-9945FF?style=flat&logo=solana&logoColor=white)](https://solana.com/)
 [![Rust](https://img.shields.io/badge/Rust-000000?style=flat&logo=rust&logoColor=white)](https://www.rust-lang.org/)
@@ -10,54 +10,56 @@ A production-grade, high-performance Solana blockchain indexer written in Rust. 
 
 ## Features
 
-- **Multi-Source Ingestion**
-  - **gRPC (Yellowstone Geyser)**: High-throughput, low-latency streaming directly from validators.
-  - **File Source**: Replay transactions from local files for testing and debugging.
-  - **RPC Backfill**: Fetch historical blocks via standard RPC.
-
-- **Protocol-Specific Parsing**
-  - **Jupiter**: Aggregator swap parsing.
-  - **Raydium**: AMM swap parsing.
-  - **Pump.fun**: Bonding curve trade parsing.
-  - **SPL Token**: Standard token transfer parsing.
-
-- **Real-time Notifications**: Telegram bot alerts for high-value transactions (whale alerts).
-
-- **Robust Architecture**
-  - Built on `tokio` for efficient async I/O.
-  - In-memory buffering for bursty traffic.
-  - Dead Letter Queue (DLQ) for failed events.
-
-- **Data Persistence**: PostgreSQL with `sqlx` for type-safe database interactions.
-
-- **GraphQL API** *(Coming Soon)*: Query indexed data via a flexible API.
-
-- **Web Dashboard** *(Coming Soon)*: Visualize indexed stats in real-time.
+- **3 Ingestion Sources** — Yellowstone gRPC (live), RPC backfill (historical), file replay (debug)
+- **4 Protocol Parsers** — Jupiter, Raydium AMM, Pump.fun, SPL Token
+- **Zero-Loss Recovery** — slot cursor in `indexer_state` + gap backfill + Dead Letter Queue
+- **Batch Persistence** — PostgreSQL via `sqlx` with `UNNEST` batch writes
+- **Whale Alerts** — Telegram bot notifications for high-value swaps
+- **Hexagonal Architecture** — swap any source, parser, or sink independently
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                         SOURCES                              │
-│   ┌─────────┐    ┌─────────┐    ┌─────────┐                 │
-│   │  gRPC   │    │  File   │    │   RPC   │                 │
-│   └────┬────┘    └────┬────┘    └────┬────┘                 │
-│        │              │              │                       │
-│        └──────────────┼──────────────┘                       │
-│                       ▼                                      │
-│              ┌────────────────┐                              │
-│              │ Ingestion Pipe │                              │
-│              └───────┬────────┘                              │
-│                      ▼                                       │
-│             ┌─────────────────┐                              │
-│             │     Parsers     │                              │
-│             │ (Jupiter, etc.) │                              │
-│             └────────┬────────┘                              │
-│                      ▼                                       │
-│   ┌─────────────┐         ┌─────────────┐                    │
-│   │  PostgreSQL │         │  Telegram   │                    │
-│   └─────────────┘         └─────────────┘                    │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                         INBOUND SOURCES                             │
+│                                                                     │
+│   ┌──────────────────┐  ┌─────────────────┐  ┌──────────────────┐  │
+│   │ Yellowstone gRPC │  │  File Replay    │  │  RPC Backfill    │  │
+│   │ (live stream)    │  │  (raw bytes)    │  │  (historical)    │  │
+│   └────────┬─────────┘  └────────┬────────┘  └────────┬─────────┘  │
+│            └───────────────────┬─┘──────────────────────┘           │
+│                                │  TransactionSource trait           │
+└────────────────────────────────┼────────────────────────────────────┘
+                                 ▼  ChainEvent
+                  ┌──────────────────────────────┐
+                  │  MemoryBuffer                │
+                  │  tokio mpsc · cap 50 000     │
+                  └──────────────┬───────────────┘
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                       INGESTION PIPELINE                            │
+│              batch 100 events · flush every 1 s                     │
+│                                                                     │
+│  ┌─────────────┐ ┌──────────────┐ ┌──────────────┐ ┌────────────┐  │
+│  │  SPL Token  │ │ Raydium AMM  │ │   Jupiter    │ │  Pump.fun  │  │
+│  │  Transfer   │ │    Swap      │ │  Vixen IDL   │ │   Trade    │  │
+│  └─────────────┘ └──────────────┘ └──────────────┘ └────────────┘  │
+│                                                                     │
+│  ✓ parse ok  →  batch               ✗ parse err  →  DLQ            │
+│  ⬆ high-value swap  →  notification queue                           │
+└───────────────────┬─────────────────────────────┬───────────────────┘
+                    │                             │
+                    ▼                             ▼
+     ┌──────────────────────────┐   ┌─────────────────────────┐
+     │  PostgreSQL · sqlx       │   │  Telegram Bot           │
+     │                          │   │                         │
+     │  token_transfers         │   │  whale alert            │
+     │  raydium_swaps           │   │  threshold: 1 SOL       │
+     │  jupiter_swaps           │   │  async queue            │
+     │  pump_fun_trades         │   │                         │
+     │  dlq_events              │   │  optional — disabled    │
+     │  indexer_state ← slot    │   │  if token not set       │
+     └──────────────────────────┘   └─────────────────────────┘
 ```
 
 ## Quick Start
@@ -65,32 +67,41 @@ A production-grade, high-performance Solana blockchain indexer written in Rust. 
 ### Prerequisites
 - **Rust** 1.75+
 - **Docker & Docker Compose**
-- **Solana RPC/gRPC URL** (e.g., Helius, QuickNode)
+- **Solana RPC/gRPC endpoint** (e.g., Helius, QuickNode)
 
-### Installation
+### Install
 
 ```bash
 git clone https://github.com/subhdotsol/Indexer-with-benifit.git
 cd Indexer-with-benifit
 ```
 
-### Configuration
-Create a `.env` file:
+### Configure
+
 ```env
-SOURCE_TYPE=file   # or 'grpc'
+SOURCE_TYPE=grpc          # or 'file'
 RUST_LOG=info
 
-# For gRPC mode
 GRPC_URL=http://127.0.0.1:10000
+GRPC_TOKEN=                        # optional, provider auth token
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/solana_indexer
+RPC_URL=https://api.mainnet-beta.solana.com
 
-# Optional: Telegram Alerts
+# Optional — Telegram whale alerts
 TELEGRAM_BOT_TOKEN=your_token
 TELEGRAM_CHAT_ID=your_chat_id
 ```
 
 ### Run
+
 ```bash
+# Start PostgreSQL
+docker-compose up -d
+
+# Run migrations
+cargo sqlx migrate run
+
+# Start indexer
 cargo run --release
 ```
 
@@ -98,89 +109,48 @@ cargo run --release
 
 ```
 .
-├── Cargo.toml              # Dependencies & project config
-├── migrations/             # SQLx database migrations
-├── docs/                   # Phase documentation
+├── Cargo.toml
+├── docker-compose.yml
+├── migrations/               # SQLx database migrations
 └── src/
-    ├── main.rs             # Entry point
-    ├── lib.rs              # Library exports
-    ├── domain/             # Core types & models
-    │   └── models.rs       # TransactionEvent, Swap types, etc.
-    ├── application/        # Business logic & pipeline
-    │   ├── ports/          # Interface definitions (Traits)
-    │   │   ├── transaction_source.rs
-    │   │   ├── transaction_parser.rs
-    │   │   └── event_repository.rs
-    │   └── use_cases/      # Ingestion pipeline
-    │       └── ingest.rs   # Background queue & batch processing
-    ├── adapters/           # External interfaces
-    │   ├── inbound/        # Data sources
-    │   │   ├── grpc_source.rs   # Yellowstone gRPC
-    │   │   └── file_source.rs   # File replay
-    │   ├── outbound/       # Data sinks
-    │   │   └── postgres_repository.rs
-    │   └── parsers/        # Protocol parsers
+    ├── main.rs               # Entry point & wiring
+    ├── lib.rs
+    ├── domain/
+    │   └── models.rs         # ChainEvent, TransactionEvent, SwapEvent
+    ├── application/
+    │   ├── ports/            # Traits: TransactionSource, TransactionParser, TransactionRepository
+    │   └── use_cases/
+    │       └── ingest.rs     # IngestionPipeline — batch loop & DLQ
+    ├── adapters/
+    │   ├── inbound/
+    │   │   ├── grpc_source.rs
+    │   │   ├── file_source.rs
+    │   │   └── rpc_source.rs
+    │   ├── outbound/
+    │   │   ├── postgres_repository.rs
+    │   │   └── telegram.rs
+    │   └── parsers/
     │       ├── jupiter.rs
     │       ├── raydium_amm.rs
     │       ├── pump_fun.rs
-    │       └── spl_token.rs
-    └── infrastructure/     # Cross-cutting concerns
+    │       ├── spl_token.rs
+    │       └── vixen_utils.rs
+    └── infrastructure/
+        └── buffer/           # MemoryBuffer (tokio mpsc)
 ```
 
 ## Roadmap
 
-### ✅ Completed
+### Completed
 
-- [x] **Phase 1: Foundation & Ingestion Pipeline**
-  - Hexagonal architecture setup
-  - Multi-source ingestion (gRPC, File, RPC)
-  - Domain models and core types
-
-- [x] **Phase 2: Protocol Parsers**
-  - SPL Token transfer parsing
-  - Raydium AMM swap parsing
-  - Jupiter aggregator swap parsing
-  - Pump.fun bonding curve trade parsing
-
-- [x] **Phase 3: PostgreSQL Persistence**
-  - Database schema with SQLx migrations
-  - Repository pattern implementation
-  - Background queue optimization (batch inserts)
-
----
-
-### 🚧 In Progress / Planned
-
-- [ ] **Phase 4: Query API & Dashboards**
-  - HTTP API endpoints (axum/actix-web)
-  - Endpoints: `/transfers`, `/swaps`, `/stats`
-  - Pagination and filtering by slot, signer, mint
-
-- [ ] **Phase 5: Real-time WebSocket Streaming**
-  - Push new events to connected clients
-  - Real-time dashboards support
-  - Event subscription by type
-
-- [ ] **Phase 6: Telegram Bot Notifications**
-  - Whale alert notifications for high-value swaps
-  - Configurable thresholds and filters
-  - Dead Letter Queue (DLQ) for failed notifications
-
-- [ ] **Phase 7: Metrics & Observability**
-  - Prometheus metrics (events/sec, queue depth, DB latency)
-  - OpenTelemetry tracing for distributed requests
-  - Health check endpoints
-
-- [ ] **Phase 8: Deployment & Infrastructure**
-  - Dockerize the indexer
-  - Kubernetes manifests / Docker Compose
-  - CI/CD pipeline for automated builds/tests
-
-- [ ] **Phase 9: Extended Parsing**
-  - Additional DEX parsers (Orca, Meteora)
-  - NFT marketplace events
-  - Staking/governance events
+- [x] Hexagonal architecture — pluggable sources, parsers, sinks
+- [x] Yellowstone gRPC ingestion (raw, one layer below Vixen)
+- [x] RPC backfill + file replay
+- [x] Jupiter, Raydium AMM, Pump.fun, SPL Token parsers
+- [x] PostgreSQL persistence with UNNEST batch writes
+- [x] Slot cursor + DLQ for zero-loss recovery
+- [x] Telegram whale alerts
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](./LICENSE) file for details.
+MIT — see [LICENSE](./LICENSE)
